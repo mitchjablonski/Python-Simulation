@@ -45,14 +45,15 @@ def eval_results_for_savings(result_savings):
         temp_df = pd.DataFrame()
         temp_df[str(keys)] = result_savings[keys]
         rows_pos, _ = temp_df.loc[temp_df[str(keys)] >= 0].shape
+        tot_rows, _ = temp_df.shape
         rows_neg,_ = temp_df.loc[temp_df[str(keys)] < 0].shape
         mean_money = temp_df[str(keys)].mean(axis = 0)
         results_summary['allowance'].append(keys)
         results_summary['positive_sim'].append(rows_pos)
         results_summary['negative_sim'].append(rows_neg)
         results_summary['mean_money'].append(mean_money)
-    savings_df = pd.DataFrame(results_summary)
-    return savings_df
+        results_summary['percent_positive'].append(rows_pos/tot_rows)
+    return pd.DataFrame(results_summary)
         
 def _main(simulation_runs, number_months_retired, savings, monthly_allowance, confidence_allowance, csv_path):
     stock_change_df = pd.read_csv(csv_path)
@@ -61,7 +62,7 @@ def _main(simulation_runs, number_months_retired, savings, monthly_allowance, co
         for num_runs in range(simulation_runs):
             if (num_runs == 0):
                 curr_perc = curr_index / (len(monthly_allowance))
-                print('Current Percentage Done {}'.format(curr_perc))
+                print('Current Percentage Done Monthly Allowance Sims {}'.format(curr_perc))
             #print(allowance, num_runs)
             result_savings[allowance].append(run_simulations(number_months_retired, savings, allowance, stock_change_df))
            
@@ -70,15 +71,15 @@ def _main(simulation_runs, number_months_retired, savings, monthly_allowance, co
                                                                                                 stock_change_df,
                                                                                                 simulation_runs, 
                                                                                                 confidence_allowance)
+    result_savings[confidence_allowance] = confidence_savings_result
     report_savings = eval_results_for_savings(result_savings) 
-    print(confidence_savings)
     
-    return result_savings, confidence_savings_amount, report_savings
+    return result_savings, report_savings, confidence_savings_amount
 if __name__ == "__main__":
-    simulation_runs       = 5
+    simulation_runs       = 1000
     number_months_retired = 12*25
     savings               = 10**6
     confidence_allowance  = 10000
     monthly_allowance     = [3000, 4000, 5000]
     csv_path = 'C:\Users\mitch\Desktop\Masters\DataMiningI\Python-Simulation\sp500.csv'
-    result_savings, confidence_savings, report_savings = _main(simulation_runs, number_months_retired, savings, monthly_allowance, confidence_allowance, csv_path)
+    result_savings, report_savings, confidence_savings = _main(simulation_runs, number_months_retired, savings, monthly_allowance, confidence_allowance, csv_path)
