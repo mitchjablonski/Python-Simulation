@@ -75,7 +75,12 @@ def determine_number_runs_for_confidence(number_months_retired, savings, stock_c
             savings += 100000*5
         else:
             savings += 100000
-        return determine_number_runs_for_confidence(number_months_retired, savings, stock_change_df, simulation_runs, confidence_allowance, run_type)
+        return determine_number_runs_for_confidence(number_months_retired, 
+                                                    savings, 
+                                                    stock_change_df,
+                                                    simulation_runs, 
+                                                    confidence_allowance, 
+                                                    run_type)
     
 def eval_results_for_savings(result_savings):
     results_summary = defaultdict(list)
@@ -101,7 +106,10 @@ def regular_run(simulation_runs, number_months_retired, savings, monthly_allowan
             if (num_runs == 0):
                 curr_perc = curr_index / (len(monthly_allowance))
                 print('Current Percentage Done Monthly Allowance Sims {}'.format(curr_perc))
-            result_savings[allowance].append(run_simulations(number_months_retired, savings, allowance, stock_change_df))
+            result_savings[allowance].append(run_simulations(number_months_retired, 
+                                                             savings,
+                                                             allowance, 
+                                                             stock_change_df))
     return result_savings
 
 ##The function we use to run our pool from main loop
@@ -110,7 +118,11 @@ def pool_run(simulation_runs, number_months_retired, savings, monthly_allowance,
     for curr_index, allowance in enumerate(monthly_allowance):
         curr_perc = curr_index / (len(monthly_allowance))
         print('Current Percentage Done Monthly Allowance Sims {}'.format(curr_perc))
-        result_savings[allowance] = execute_pool_runs(number_months_retired, savings, allowance, stock_change_df, simulation_runs)
+        result_savings[allowance] = execute_pool_runs(number_months_retired,
+                                                      savings, 
+                                                      allowance, 
+                                                      stock_change_df, 
+                                                      simulation_runs)
     return result_savings
 
 ##Function called from pool_run and the confidence calc
@@ -118,7 +130,12 @@ def pool_run(simulation_runs, number_months_retired, savings, monthly_allowance,
 def execute_pool_runs(number_months_retired, savings, allowance, stock_change_df, simulation_runs):
     run_list = [runs for runs in range(simulation_runs)]
     pool = Pool()
-    parital_simulations_func = partial(run_simulations, number_months_retired, savings, allowance, stock_change_df)
+    parital_simulations_func = partial(run_simulations, 
+                                       number_months_retired,
+                                       savings,
+                                       allowance, 
+                                       stock_change_df)
+    
     return (pool.map(parital_simulations_func, run_list))
 
 ##The function we use to run our process from main loop
@@ -127,7 +144,11 @@ def process_run_manager(simulation_runs, number_months_retired, savings, monthly
     for curr_index, allowance in enumerate(monthly_allowance):
         curr_perc = curr_index / (len(monthly_allowance))
         print('Current Percentage Done Monthly Allowance Sims {}'.format(curr_perc))
-        result_savings[allowance] = execute_process_manager(simulation_runs, number_months_retired, savings, allowance, stock_change_df)
+        result_savings[allowance] = execute_process_manager(simulation_runs,
+                                                            number_months_retired,
+                                                            savings,
+                                                            allowance, 
+                                                            stock_change_df)
     return result_savings
 
 ##Function we use to call from process_run_manager and confidence
@@ -153,14 +174,27 @@ def execute_process_manager(simulation_runs, number_months_retired, savings, all
     return return_list
 
 def _main(simulation_runs, number_months_retired, savings, monthly_allowance, confidence_allowance, csv_path, run_type):
+    
     stock_change_df = pd.read_csv(csv_path)
     start_time = time.time()
     if run_type is REGULAR_RUN:
-        result_savings = regular_run(simulation_runs, number_months_retired, savings, monthly_allowance, stock_change_df)
+        result_savings = regular_run(simulation_runs, 
+                                     number_months_retired, 
+                                     savings, 
+                                     monthly_allowance, 
+                                     stock_change_df)
     elif run_type is POOL_RUN:
-        result_savings = pool_run(simulation_runs, number_months_retired, savings, monthly_allowance, stock_change_df)
+        result_savings = pool_run(simulation_runs,
+                                  number_months_retired, 
+                                  savings, 
+                                  monthly_allowance, 
+                                  stock_change_df)
     elif run_type is PROCESS_RUN_MANAGER:
-        result_savings = process_run_manager(simulation_runs, number_months_retired, savings, monthly_allowance, stock_change_df)
+        result_savings = process_run_manager(simulation_runs,
+                                             number_months_retired, 
+                                             savings,
+                                             monthly_allowance, 
+                                             stock_change_df)
     
     ##We can't predict length to converge for confidence without seed, time before it.  Use some crude timing
     print('{} seconds of run time for run type {}'.format((time.time() - start_time), run_type))
@@ -168,7 +202,8 @@ def _main(simulation_runs, number_months_retired, savings, monthly_allowance, co
                                                                                                 savings,
                                                                                                 stock_change_df,
                                                                                                 simulation_runs, 
-                                                                                                confidence_allowance, run_type)
+                                                                                                confidence_allowance, 
+                                                                                                run_type)
     result_savings[confidence_allowance] = confidence_savings_result
     report_savings = eval_results_for_savings(result_savings) 
     return result_savings, report_savings, confidence_savings_amount
