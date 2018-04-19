@@ -12,6 +12,7 @@ from multiprocessing import Pool, Process, Manager, cpu_count
 from functools import partial
 import time
 
+##Run our simulations normally
 def run_simulations(number_months_retired, savings, monthly_allowance, stock_change_df, run_num=None):
      num_rows,_ = stock_change_df.shape
      random_change = np.random.randint(0, num_rows, size=number_months_retired)
@@ -22,7 +23,8 @@ def run_simulations(number_months_retired, savings, monthly_allowance, stock_cha
          ##Take out our monthly allowance
          savings -= monthly_allowance
      return savings
- 
+
+##Split our simulation run count into chuncks, and call this function with each chuck based on number of CPU
 def run_simulations_process(number_months_retired, savings, monthly_allowance, stock_change_df, split_run_size, return_multi_process_list):
     for runs in range(split_run_size):
         num_rows,_ = stock_change_df.shape
@@ -91,6 +93,7 @@ def eval_results_for_savings(result_savings):
         results_summary['percent_positive'].append(rows_pos/tot_rows)
     return pd.DataFrame(results_summary)
 
+##Function we use to run from main
 def regular_run(simulation_runs, number_months_retired, savings, monthly_allowance, stock_change_df):
     result_savings = defaultdict(list)
     for curr_index, allowance in enumerate(monthly_allowance):
@@ -101,12 +104,7 @@ def regular_run(simulation_runs, number_months_retired, savings, monthly_allowan
             result_savings[allowance].append(run_simulations(number_months_retired, savings, allowance, stock_change_df))
     return result_savings
 
-def execute_pool_runs(number_months_retired, savings, allowance, stock_change_df, simulation_runs):
-    run_list = [runs for runs in range(simulation_runs)]
-    pool = Pool()
-    parital_simulations_func = partial(run_simulations, number_months_retired, savings, allowance, stock_change_df)
-    return (pool.map(parital_simulations_func, run_list))
-
+##The function we use to run our pool from main loop
 def pool_run(simulation_runs, number_months_retired, savings, monthly_allowance, stock_change_df):
     result_savings = defaultdict(list)
     for curr_index, allowance in enumerate(monthly_allowance):
@@ -115,6 +113,26 @@ def pool_run(simulation_runs, number_months_retired, savings, monthly_allowance,
         result_savings[allowance] = execute_pool_runs(number_months_retired, savings, allowance, stock_change_df, simulation_runs)
     return result_savings
 
+##Function called from pool_run and the confidence calc
+##Make our run list into an iterable, build a partial function, and use pool.map
+def execute_pool_runs(number_months_retired, savings, allowance, stock_change_df, simulation_runs):
+    run_list = [runs for runs in range(simulation_runs)]
+    pool = Pool()
+    parital_simulations_func = partial(run_simulations, number_months_retired, savings, allowance, stock_change_df)
+    return (pool.map(parital_simulations_func, run_list))
+
+##The function we use to run our process from main loop
+def process_run_manager(simulation_runs, number_months_retired, savings, monthly_allowance, stock_change_df):
+    result_savings = defaultdict(list)
+    for curr_index, allowance in enumerate(monthly_allowance):
+        curr_perc = curr_index / (len(monthly_allowance))
+        print('Current Percentage Done Monthly Allowance Sims {}'.format(curr_perc))
+        result_savings[allowance] = execute_process_manager(simulation_runs, number_months_retired, savings, allowance, stock_change_df)
+    return result_savings
+
+##Function we use to call from process_run_manager and confidence
+##Split up our run size into chunks based on the number of processors and call 
+##The process command that many times.
 def execute_process_manager(simulation_runs, number_months_retired, savings, allowance, stock_change_df):
     jobs = []
     multi_proc_list = Manager().list()
@@ -133,14 +151,6 @@ def execute_process_manager(simulation_runs, number_months_retired, savings, all
         proc.join()
     return_list = [results for results in multi_proc_list]
     return return_list
-
-def process_run_manager(simulation_runs, number_months_retired, savings, monthly_allowance, stock_change_df):
-    result_savings = defaultdict(list)
-    for curr_index, allowance in enumerate(monthly_allowance):
-        curr_perc = curr_index / (len(monthly_allowance))
-        print('Current Percentage Done Monthly Allowance Sims {}'.format(curr_perc))
-        result_savings[allowance] = execute_process_manager(simulation_runs, number_months_retired, savings, allowance, stock_change_df)
-    return result_savings
 
 def _main(simulation_runs, number_months_retired, savings, monthly_allowance, confidence_allowance, csv_path, run_type):
     stock_change_df = pd.read_csv(csv_path)
