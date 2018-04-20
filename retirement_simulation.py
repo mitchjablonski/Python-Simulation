@@ -8,7 +8,7 @@ from __future__ import division, print_function
 import pandas as pd
 import numpy as np
 from collections import defaultdict
-from multiprocessing import Pool, Process, Manager, cpu_count
+from multiprocessing import Pool, Process, Manager, cpu_count, Queue, Pipe
 from functools import partial
 import time
 
@@ -173,6 +173,97 @@ def execute_process_manager(simulation_runs, number_months_retired, savings, all
     return_list = [results for results in multi_proc_list]
     return return_list
 
+def process_run_queue(simulation_runs, number_months_retired, savings, monthly_allowance, stock_change_df):
+    result_savings = defaultdict(list)
+    for curr_index, allowance in enumerate(monthly_allowance):
+        jobs = []
+        num_procs = cpu_count()
+        split_run_size = int(simulation_runs / num_procs)
+        ##Should out_q be defined here or outside loop?  when do we want to join proc?
+        out_q = Queue()
+        result_savings_list = []
+        for num_splits in range(num_procs):
+            if (num_splits == 0):
+                curr_perc = curr_index / (len(monthly_allowance))
+                print('Current Percentage Done Monthly Allowance Sims {}'.format(curr_perc))
+            proc = Process(target = run_simulations_process_out_q, args=(number_months_retired, 
+                                                                         savings, 
+                                                                         allowance, 
+                                                                         stock_change_df,
+                                                                         split_run_size, 
+                                                                         out_q,))
+            jobs.append(proc)
+            proc.start()
+        
+        for num_runs in range(num_procs):
+            result_savings_list += out_q.get()
+            
+        result_savings[allowance] =result_savings_list
+        for proc in jobs:
+            proc.join()
+            
+    return result_savings
+
+def run_simulations_process_out_q(number_months_retired, savings, monthly_allowance, stock_change_df, split_run_size, out_q):
+    savings_list = []
+    for runs in range(split_run_size):
+        num_rows,_ = stock_change_df.shape
+        random_change = np.random.randint(0, num_rows, size=number_months_retired)
+        local_savings = savings
+        for months in range(number_months_retired):
+            monthly_change = stock_change_df.loc[random_change[months], 'MonthlyGainOrLoss']
+            ##Apply Monthly Change
+            local_savings += local_savings * monthly_change
+            ##Take out our monthly allowance
+            local_savings -= monthly_allowance
+        savings_list.append(local_savings)
+    out_q.put(savings_list)
+    
+def process_run_pipe(simulation_runs, number_months_retired, savings, monthly_allowance, stock_change_df):
+    result_savings = defaultdict(list)
+    for curr_index, allowance in enumerate(monthly_allowance):
+        jobs = []
+        num_procs = cpu_count()
+        split_run_size = int(simulation_runs / num_procs)
+        ##Should out_q be defined here or outside loop?  when do we want to join proc?
+        output_p, input_p = Pipe()
+        result_savings_list = []
+        for num_splits in range(num_procs):
+            if (num_splits == 0):
+                curr_perc = curr_index / (len(monthly_allowance))
+                print('Current Percentage Done Monthly Allowance Sims {}'.format(curr_perc))
+            proc = Process(target = run_simulations_process_out_pipe, args=(number_months_retired, 
+                                                                         savings, 
+                                                                         allowance, 
+                                                                         stock_change_df,
+                                                                         split_run_size, 
+                                                                         output_p,))
+            jobs.append(proc)
+            proc.start()
+        for num_runs in range(num_procs):
+            result_savings_list += input_p.recv()
+            
+        result_savings[allowance] = result_savings_list
+        for proc in jobs:
+            proc.join()
+            
+    return result_savings
+def run_simulations_process_out_pipe(number_months_retired, savings, monthly_allowance, stock_change_df, split_run_size, output_p):
+    savings_list = []
+    for runs in range(split_run_size):
+        num_rows,_ = stock_change_df.shape
+        random_change = np.random.randint(0, num_rows, size=number_months_retired)
+        local_savings = savings
+        for months in range(number_months_retired):
+            monthly_change = stock_change_df.loc[random_change[months], 'MonthlyGainOrLoss']
+            ##Apply Monthly Change
+            local_savings += local_savings * monthly_change
+            ##Take out our monthly allowance
+            local_savings -= monthly_allowance
+        savings_list.append(local_savings)
+    output_p.send(savings_list)
+
+
 def _main(simulation_runs, number_months_retired, savings, monthly_allowance, confidence_allowance, csv_path, run_type):
     
     stock_change_df = pd.read_csv(csv_path)
@@ -195,7 +286,18 @@ def _main(simulation_runs, number_months_retired, savings, monthly_allowance, co
                                              savings,
                                              monthly_allowance, 
                                              stock_change_df)
-    
+    elif run_type is PROCESS_RUN_QUEUE:
+        result_savings = process_run_queue(simulation_runs,
+                                           number_months_retired, 
+                                           savings,
+                                           monthly_allowance, 
+                                           stock_change_df)
+    elif run_type is PROCESS_RUN_PIPE:
+        result_savings = process_run_pipe(simulation_runs,
+                                         number_months_retired,
+                                         savings,
+                                         monthly_allowance,
+                                         stock_change_df)    
     ##We can't predict length to converge for confidence without seed, time before it.  Use some crude timing
     print('{} seconds of run time for run type {}'.format((time.time() - start_time), run_type))
     confidence_savings_amount, confidence_savings_result = determine_number_runs_for_confidence(number_months_retired,
@@ -211,22 +313,27 @@ def _main(simulation_runs, number_months_retired, savings, monthly_allowance, co
 REGULAR_RUN = 0
 POOL_RUN = 1
 PROCESS_RUN_MANAGER = 2
-
+PROCESS_RUN_QUEUE = 3
+PROCESS_RUN_PIPE = 4
+##Implement pipes
 if __name__ == "__main__":
-    run_type = PROCESS_RUN_MANAGER
+    run_type = PROCESS_RUN_PIPE
     simulation_runs = 1000
     number_months_retired = 12*25
     savings = 10**6
     confidence_allowance = 10000
     monthly_allowance = [3000, 4000, 5000]
     csv_path = 'C:\Users\mitch\Desktop\Masters\DataMiningI\Python-Simulation\sp500.csv'
-    result_savings, report_savings, confidence_savings = _main(simulation_runs, 
-                                                               number_months_retired,
-                                                               savings,
-                                                               monthly_allowance, 
-                                                               confidence_allowance, 
-                                                               csv_path,
-                                                               run_type)
+    for run_type in [REGULAR_RUN, POOL_RUN, PROCESS_RUN_MANAGER, PROCESS_RUN_QUEUE, PROCESS_RUN_PIPE]:
+        result_savings, report_savings, confidence_savings = _main(simulation_runs, 
+                                                                   number_months_retired,
+                                                                   savings,
+                                                                   monthly_allowance, 
+                                                                   confidence_allowance, 
+                                                                   csv_path,
+                                                                   run_type)
     #Pool run time, ~ 60 seconds at 1000 sims for each allowance
     #Regular run time, ~180 seconds 
     #85 seconds for process with manager
+    ##77 with queue
+    ##77 with pipe
