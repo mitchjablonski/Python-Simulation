@@ -318,12 +318,13 @@ PROCESS_RUN_PIPE = 4
 ##Implement pipes
 if __name__ == "__main__":
     run_type = PROCESS_RUN_PIPE
-    simulation_runs = 1000
+    simulation_runs = 10
     number_months_retired = 12*25
     savings = 10**6
     confidence_allowance = 10000
     monthly_allowance = [3000, 4000, 5000]
-    csv_path = 'C:\Users\mitch\Desktop\Masters\DataMiningI\Python-Simulation\sp500.csv'
+    csv_path = r'C:\Users\mitch\Desktop\Masters\DataMiningI\Python-Simulation\sp500.csv'
+    print(csv_path)
     for run_type in [REGULAR_RUN, POOL_RUN, PROCESS_RUN_MANAGER, PROCESS_RUN_QUEUE, PROCESS_RUN_PIPE]:
         result_savings, report_savings, confidence_savings = _main(simulation_runs, 
                                                                    number_months_retired,
