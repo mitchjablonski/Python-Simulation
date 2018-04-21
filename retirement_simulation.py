@@ -11,49 +11,24 @@ from collections import defaultdict
 from multiprocessing import Pool, Process, Manager, cpu_count, Queue, Pipe
 from functools import partial
 import time
-
-##Run our simulations normally
-def run_simulations(number_months_retired, savings, monthly_allowance, stock_change_df, run_num=None):
-     num_rows,_ = stock_change_df.shape
-     random_change = np.random.randint(0, num_rows, size=number_months_retired)
-     for months in range(number_months_retired):
-         monthly_change = stock_change_df.loc[random_change[months], 'MonthlyGainOrLoss']
-         ##Apply Monthly Change
-         savings += savings * monthly_change
-         ##Take out our monthly allowance
-         savings -= monthly_allowance
-     return savings
-
-##Split our simulation run count into chuncks, and call this function with each chuck based on number of CPU
-def run_simulations_process(number_months_retired, savings, monthly_allowance, stock_change_df, split_run_size, return_multi_process_list):
-    for runs in range(split_run_size):
-        num_rows,_ = stock_change_df.shape
-        random_change = np.random.randint(0, num_rows, size=number_months_retired)
-        local_savings = savings
-        for months in range(number_months_retired):
-            monthly_change = stock_change_df.loc[random_change[months], 'MonthlyGainOrLoss']
-            ##Apply Monthly Change
-            local_savings += local_savings * monthly_change
-            ##Take out our monthly allowance
-            local_savings -= monthly_allowance
-        return_multi_process_list.append(local_savings)
+import run_type_factory
  
-def determine_number_runs_for_confidence(number_months_retired, savings, stock_change_df, simulation_runs, confidence_allowance, run_type):
+def determine_number_runs_for_confidence(number_months_retired, savings, stock_change_df, simulation_runs, confidence_allowance, run_type, process_type):
     ##We want to withdrawl 10k a month and have 95% confidence we won't run out of money, how much do we need?
     savings_for_monthly = []
     savings_df = pd.DataFrame()
     if run_type is POOL_RUN:
-        savings_for_monthly = execute_pool_runs(number_months_retired,
+        savings_for_monthly = execute_pool_runs(simulation_runs,
+                                                number_months_retired,
                                                 savings, 
                                                 confidence_allowance, 
-                                                stock_change_df, 
-                                                simulation_runs)
-    elif run_type is PROCESS_RUN_MANAGER:
-        savings_for_monthly = execute_process_manager(simulation_runs, 
-                                                      number_months_retired, 
-                                                      savings, 
-                                                      confidence_allowance,
-                                                      stock_change_df)
+                                                stock_change_df)
+    elif run_type in [PROCESS_RUN_MANAGER, PROCESS_RUN_QUEUE, PROCESS_RUN_PIPE]:
+        savings_for_monthly = process_type.run_simulations(number_months_retired, 
+                                                           savings, 
+                                                           confidence_allowance, 
+                                                           stock_change_df, 
+                                                           simulation_runs)
     else:
         for num_runs in range(simulation_runs):
             savings_for_monthly.append(run_simulations(number_months_retired, 
@@ -80,7 +55,8 @@ def determine_number_runs_for_confidence(number_months_retired, savings, stock_c
                                                     stock_change_df,
                                                     simulation_runs, 
                                                     confidence_allowance, 
-                                                    run_type)
+                                                    run_type,
+                                                    process_type)
     
 def eval_results_for_savings(result_savings):
     results_summary = defaultdict(list)
@@ -111,6 +87,17 @@ def regular_run(simulation_runs, number_months_retired, savings, monthly_allowan
                                                              allowance, 
                                                              stock_change_df))
     return result_savings
+##Run our simulations normally
+def run_simulations(number_months_retired, savings, monthly_allowance, stock_change_df, run_num=None):
+     num_rows,_ = stock_change_df.shape
+     random_change = np.random.randint(0, num_rows, size=number_months_retired)
+     for months in range(number_months_retired):
+         monthly_change = stock_change_df.loc[random_change[months], 'MonthlyGainOrLoss']
+         ##Apply Monthly Change
+         savings += savings * monthly_change
+         ##Take out our monthly allowance
+         savings -= monthly_allowance
+     return savings
 
 ##The function we use to run our pool from main loop
 def pool_run(simulation_runs, number_months_retired, savings, monthly_allowance, stock_change_df):
@@ -118,16 +105,16 @@ def pool_run(simulation_runs, number_months_retired, savings, monthly_allowance,
     for curr_index, allowance in enumerate(monthly_allowance):
         curr_perc = curr_index / (len(monthly_allowance))
         print('Current Percentage Done Monthly Allowance Sims {}'.format(curr_perc))
-        result_savings[allowance] = execute_pool_runs(number_months_retired,
+        result_savings[allowance] = execute_pool_runs(simulation_runs,
+                                                      number_months_retired,
                                                       savings, 
                                                       allowance, 
-                                                      stock_change_df, 
-                                                      simulation_runs)
+                                                      stock_change_df)
     return result_savings
 
 ##Function called from pool_run and the confidence calc
 ##Make our run list into an iterable, build a partial function, and use pool.map
-def execute_pool_runs(number_months_retired, savings, allowance, stock_change_df, simulation_runs):
+def execute_pool_runs(simulation_runs, number_months_retired, savings, allowance, stock_change_df):
     run_list = [runs for runs in range(simulation_runs)]
     pool = Pool()
     parital_simulations_func = partial(run_simulations, 
@@ -139,129 +126,20 @@ def execute_pool_runs(number_months_retired, savings, allowance, stock_change_df
     return (pool.map(parital_simulations_func, run_list))
 
 ##The function we use to run our process from main loop
-def process_run_manager(simulation_runs, number_months_retired, savings, monthly_allowance, stock_change_df):
+def process_run_manager(simulation_runs, number_months_retired, savings, monthly_allowance, stock_change_df, process_type):
     result_savings = defaultdict(list)
     for curr_index, allowance in enumerate(monthly_allowance):
         curr_perc = curr_index / (len(monthly_allowance))
         print('Current Percentage Done Monthly Allowance Sims {}'.format(curr_perc))
-        result_savings[allowance] = execute_process_manager(simulation_runs,
-                                                            number_months_retired,
-                                                            savings,
-                                                            allowance, 
-                                                            stock_change_df)
+        ##Function we use to call from process_run_manager and confidence
+        ##Split up our run size into chunks based on the number of processors and call 
+        ##The process command that many times.  
+        result_savings[allowance] = process_type.exectue_runs(simulation_runs, 
+                                                             number_months_retired, 
+                                                             savings, 
+                                                             allowance, 
+                                                             stock_change_df)
     return result_savings
-
-##Function we use to call from process_run_manager and confidence
-##Split up our run size into chunks based on the number of processors and call 
-##The process command that many times.
-def execute_process_manager(simulation_runs, number_months_retired, savings, allowance, stock_change_df):
-    jobs = []
-    multi_proc_list = Manager().list()
-    num_procs = cpu_count()
-    split_run_size = int(simulation_runs / num_procs)
-    for num_splits in range(num_procs):           
-        proc = Process(target = run_simulations_process, args=(number_months_retired, 
-                                                               savings, 
-                                                               allowance, 
-                                                               stock_change_df, 
-                                                               split_run_size,
-                                                               multi_proc_list,))
-        jobs.append(proc)
-        proc.start()
-    for proc in jobs:
-        proc.join()
-    return_list = [results for results in multi_proc_list]
-    return return_list
-
-def process_run_queue(simulation_runs, number_months_retired, savings, monthly_allowance, stock_change_df):
-    result_savings = defaultdict(list)
-    for curr_index, allowance in enumerate(monthly_allowance):
-        jobs = []
-        num_procs = cpu_count()
-        split_run_size = int(simulation_runs / num_procs)
-        ##Should out_q be defined here or outside loop?  when do we want to join proc?
-        out_q = Queue()
-        result_savings_list = []
-        for num_splits in range(num_procs):
-            if (num_splits == 0):
-                curr_perc = curr_index / (len(monthly_allowance))
-                print('Current Percentage Done Monthly Allowance Sims {}'.format(curr_perc))
-            proc = Process(target = run_simulations_process_out_q, args=(number_months_retired, 
-                                                                         savings, 
-                                                                         allowance, 
-                                                                         stock_change_df,
-                                                                         split_run_size, 
-                                                                         out_q,))
-            jobs.append(proc)
-            proc.start()
-        
-        for num_runs in range(num_procs):
-            result_savings_list += out_q.get()
-            
-        result_savings[allowance] =result_savings_list
-        for proc in jobs:
-            proc.join()
-            
-    return result_savings
-
-def run_simulations_process_out_q(number_months_retired, savings, monthly_allowance, stock_change_df, split_run_size, out_q):
-    savings_list = []
-    for runs in range(split_run_size):
-        num_rows,_ = stock_change_df.shape
-        random_change = np.random.randint(0, num_rows, size=number_months_retired)
-        local_savings = savings
-        for months in range(number_months_retired):
-            monthly_change = stock_change_df.loc[random_change[months], 'MonthlyGainOrLoss']
-            ##Apply Monthly Change
-            local_savings += local_savings * monthly_change
-            ##Take out our monthly allowance
-            local_savings -= monthly_allowance
-        savings_list.append(local_savings)
-    out_q.put(savings_list)
-    
-def process_run_pipe(simulation_runs, number_months_retired, savings, monthly_allowance, stock_change_df):
-    result_savings = defaultdict(list)
-    for curr_index, allowance in enumerate(monthly_allowance):
-        jobs = []
-        num_procs = cpu_count()
-        split_run_size = int(simulation_runs / num_procs)
-        ##Should out_q be defined here or outside loop?  when do we want to join proc?
-        output_p, input_p = Pipe()
-        result_savings_list = []
-        for num_splits in range(num_procs):
-            if (num_splits == 0):
-                curr_perc = curr_index / (len(monthly_allowance))
-                print('Current Percentage Done Monthly Allowance Sims {}'.format(curr_perc))
-            proc = Process(target = run_simulations_process_out_pipe, args=(number_months_retired, 
-                                                                         savings, 
-                                                                         allowance, 
-                                                                         stock_change_df,
-                                                                         split_run_size, 
-                                                                         output_p,))
-            jobs.append(proc)
-            proc.start()
-        for num_runs in range(num_procs):
-            result_savings_list += input_p.recv()
-            
-        result_savings[allowance] = result_savings_list
-        for proc in jobs:
-            proc.join()
-            
-    return result_savings
-def run_simulations_process_out_pipe(number_months_retired, savings, monthly_allowance, stock_change_df, split_run_size, output_p):
-    savings_list = []
-    for runs in range(split_run_size):
-        num_rows,_ = stock_change_df.shape
-        random_change = np.random.randint(0, num_rows, size=number_months_retired)
-        local_savings = savings
-        for months in range(number_months_retired):
-            monthly_change = stock_change_df.loc[random_change[months], 'MonthlyGainOrLoss']
-            ##Apply Monthly Change
-            local_savings += local_savings * monthly_change
-            ##Take out our monthly allowance
-            local_savings -= monthly_allowance
-        savings_list.append(local_savings)
-    output_p.send(savings_list)
 
 
 def _main(simulation_runs, number_months_retired, savings, monthly_allowance, confidence_allowance, csv_path, run_type):
@@ -280,24 +158,38 @@ def _main(simulation_runs, number_months_retired, savings, monthly_allowance, co
                                   savings, 
                                   monthly_allowance, 
                                   stock_change_df)
-    elif run_type is PROCESS_RUN_MANAGER:
+
+    elif run_type in [PROCESS_RUN_MANAGER, PROCESS_RUN_QUEUE]:
+        process_type = run_type_factory.RunFactory(run_type)
         result_savings = process_run_manager(simulation_runs,
                                              number_months_retired, 
                                              savings,
                                              monthly_allowance, 
-                                             stock_change_df)
-    elif run_type is PROCESS_RUN_QUEUE:
+                                             stock_change_df,
+                                             process_type)
+        '''
+        process_type = run_type_factory.RunFactory(run_type).factory()
+        result_savings = process_type.execute_runs(simulation_runs,
+                                                   number_months_retired,
+                                                   savings,
+                                                   monthly_allowance,
+                                                   stock_change_df)
+    #elif run_type is PROCESS_RUN_QUEUE:
+        '''
         result_savings = process_run_queue(simulation_runs,
                                            number_months_retired, 
                                            savings,
                                            monthly_allowance, 
                                            stock_change_df)
-    elif run_type is PROCESS_RUN_PIPE:
+        '''
+   # elif run_type is PROCESS_RUN_PIPE:
+        '''
         result_savings = process_run_pipe(simulation_runs,
                                          number_months_retired,
                                          savings,
                                          monthly_allowance,
-                                         stock_change_df)    
+                                         stock_change_df)   
+        ''' 
     ##We can't predict length to converge for confidence without seed, time before it.  Use some crude timing
     print('{} seconds of run time for run type {}'.format((time.time() - start_time), run_type))
     confidence_savings_amount, confidence_savings_result = determine_number_runs_for_confidence(number_months_retired,
@@ -305,7 +197,8 @@ def _main(simulation_runs, number_months_retired, savings, monthly_allowance, co
                                                                                                 stock_change_df,
                                                                                                 simulation_runs, 
                                                                                                 confidence_allowance, 
-                                                                                                run_type)
+                                                                                                run_type,
+                                                                                                process_type)
     result_savings[confidence_allowance] = confidence_savings_result
     report_savings = eval_results_for_savings(result_savings) 
     return result_savings, report_savings, confidence_savings_amount
@@ -318,14 +211,15 @@ PROCESS_RUN_PIPE = 4
 ##Implement pipes
 if __name__ == "__main__":
     run_type = PROCESS_RUN_PIPE
-    simulation_runs = 10
+    simulation_runs = 100
     number_months_retired = 12*25
     savings = 10**6
     confidence_allowance = 10000
     monthly_allowance = [3000, 4000, 5000]
     csv_path = r'C:\Users\mitch\Desktop\Masters\DataMiningI\Python-Simulation\sp500.csv'
     print(csv_path)
-    for run_type in [REGULAR_RUN, POOL_RUN, PROCESS_RUN_MANAGER, PROCESS_RUN_QUEUE, PROCESS_RUN_PIPE]:
+    #for run_type in [REGULAR_RUN, POOL_RUN, PROCESS_RUN_MANAGER, PROCESS_RUN_QUEUE, PROCESS_RUN_PIPE]:
+    for run_type in [PROCESS_RUN_MANAGER, PROCESS_RUN_QUEUE, PROCESS_RUN_PIPE]:
         result_savings, report_savings, confidence_savings = _main(simulation_runs, 
                                                                    number_months_retired,
                                                                    savings,
