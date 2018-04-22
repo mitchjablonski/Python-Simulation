@@ -8,10 +8,12 @@ Created on Fri Apr 20 20:51:46 2018
 from __future__ import division, print_function
 
 from collections import defaultdict
-from multiprocessing import Process, Queue, Pipe, Manager, cpu_count, freeze_support
+from multiprocessing import Process, Queue, Pipe, Manager, cpu_count, freeze_support, Pool
 import numpy as np
 from abc import ABCMeta#if we need an abstract method, abstractmethod would use @abstractmethod on function
 import pandas as pd
+from functools import partial
+
 
 REGULAR_RUN = 0
 POOL_RUN = 1
@@ -48,7 +50,7 @@ class RegularRunType(object):
                                                                  allowance,
                                                                  stock_change_df,
                                                                  simulation_runs)
-        return 
+        return result_savings
 
     def run_simulations(self, number_months_retired, savings, allowance, stock_change_df, simulation_runs): 
         num_rows,_ = stock_change_df.shape
@@ -68,9 +70,11 @@ class RegularRunType(object):
 class PoolTypeRun(object):
     def __init__(self, run_type):
         self.run_type = run_type
+        
     def execute_runs(self, simulation_runs, number_months_retired, savings, monthly_allowance, stock_change_df):
-        result_savings = default_dict(list)
+        result_savings = defaultdict(list)
         for curr_index, allowance in enumerate(monthly_allowance):
+            curr_perc = curr_index / len(monthly_allowance)
             print('Current Percentage Done Monthly Allowance Sims {}'.format(curr_perc))
             result_savings[allowance] = self.run_simulations(number_months_retired, 
                                                              savings, 
@@ -83,34 +87,36 @@ class PoolTypeRun(object):
         ##provide run list as the iterable
         run_list = [runs for runs in range(simulation_runs)]
         pool = Pool()
-        partial_simulations_function = partial(self.simulation_run_format,
+        ##We cant pickle a function defined in our class, use one that is global
+        partial_simulations_function = partial(simulation_run_format_pool,
                                                number_months_retired,
                                                savings,
                                                allowance,
                                                stock_change_df)
-
-        return pool.map(partial_simulations_function, run_list)
-
-    def simulation_run_format(self, number_months_retired, savings, allowance, stock_change_df, run_num = None):
-        num_rows,_ = stock_change_df.shape
-        random_change = np.random.randint(0, num_rows, size=number_months_retired)
-        for months in range(number_months_retired):
-            monthly_change = stock_change_df.loc[random_change[months], 'MonthlyGainOrLoss']
-            ##Apply Monthly Change
-            savings += savings * monthly_change
-            # ##Take out our monthly allowance
-            savings -= allowance
-        return savings
+        return (pool.map(partial_simulations_function, run_list))
+##Needs to be defined outside class due to pool restrictions
+def simulation_run_format_pool(number_months_retired, savings, allowance, stock_change_df, run_num = None):
+    num_rows,_ = stock_change_df.shape
+    random_change = np.random.randint(0, num_rows, size=number_months_retired)
+    for months in range(number_months_retired):
+        monthly_change = stock_change_df.loc[random_change[months], 'MonthlyGainOrLoss']
+        ##Apply Monthly Change
+        savings += savings * monthly_change
+        # ##Take out our monthly allowance
+        savings -= allowance
+    return savings
 
 class ProcessTypeRun(object):
     def __init__(self, run_type):
         self.run_type = run_type
+    '''
     def run_test(self):
         Container = ContainerFactory(self.run_type).get_container()
         proc = Process(target=self.run_simulations_process_test,  args=(5, 1, 1, pd.read_csv(r'C:\Users\mitch\Desktop\Masters\DataMiningI\Python-Simulation\sp500.csv'), 5, Container))
         proc.start()
         proc.join()
         print(Container.get_output(1))
+    '''
     #Execute process runs.
     def execute_runs(self, simulation_runs, number_months_retired, savings, monthly_allowance, stock_change_df):
         result_savings = defaultdict(list)
@@ -134,9 +140,12 @@ class ProcessTypeRun(object):
                                                                     Container))
             jobs.append(proc)
             proc.start()
-        for proc in jobs:
-            proc.join()
-        return Container.get_output(num_procs)
+        ##Pipe and Queue want jobs joined after the items are recieved, the Manager wants them joined before
+        ##Let them handle the joining
+        return_list = Container.get_output(num_procs, jobs)#, jobs)
+        #print(return_list)
+        return return_list
+
     def simulation_run_format(self, number_months_retired, savings, monthly_allowance, stock_change_df, split_run_size, Container):
         savings_list = []
         for runs in range(split_run_size):
@@ -172,62 +181,54 @@ class ContainerClass(object):
     __metaclass__ = ABCMeta
     def __init__(self):
         pass
-    '''
-    def update_output(self, savings):
-        print('test1')
-        pass
-        
-    def get_output(self):
-        pass
-    '''
     
 class ManagerContainer(ContainerClass):
     def __init__(self):
+        #print('building manager')
         self.list = Manager().list()
-        print('built manager')
     
     def update_output(self, savings):
         for result in savings:
             self.list.append(result)
-        #self.list += savings
-        print('updated manager output')
-    '''
-    Consider using a 
-    def update_local_list(self, savings, savings_list):
-    '''
+        #Consider using a local list function and overall list function to avoid loop above
         
-    def get_output(self, num_procs):
+    def get_output(self, num_procs, jobs):
         ##This implementation doesnt use num_procs
+        for proc in jobs:
+            proc.join()
+        temp_list = [result for result in self.list]
         return [result for result in self.list]
 
 class QueueContainer(ContainerClass):
     def __init__(self):
-        print('building queue')
+        #print('building queue')
         self.output_q = Queue()
     
     def update_output(self, savings_list):
-        print('test')
         self.output_q.put(savings_list)
     
-    def get_output(self, num_procs):
+    def get_output(self, num_procs, jobs):
         result_list = []
         for num_runs in range(num_procs):
             result_list += self.output_q.get()
+        for proc in jobs:
+            proc.join()
         return result_list
     
 class PipeContainer(ContainerClass):
     def __init__(self):
-        print('building pipe')
+        #print('building pipe')
         self.output_p, self.input_p = Pipe()
         
     def update_output(self, savings_list):
-        print('test2')
         self.output_p.send(savings_list)
         
-    def get_output(self, num_procs):
+    def get_output(self, num_procs, jobs):
         result_list = []
         for num_runs in range(num_procs):
             result_list += self.input_p.recv()
+        for proc in jobs:
+            proc.join()            
         return result_list
 '''
 REGULAR_RUN = 0
@@ -243,8 +244,11 @@ def _main():
     #proc.join()
     #print([result for result in multi_list])
     ##2,3,4
-    for run_type in [PROCESS_RUN_MANAGER, PROCESS_RUN_QUEUE, PROCESS_RUN_PIPE]:
-        TestClass(run_type).run_test()
+    for run_type in [REGULAR_RUN, POOL_RUN, PROCESS_RUN_MANAGER, PROCESS_RUN_QUEUE, PROCESS_RUN_PIPE]:
+        run_ver = RunFactory(run_type).factory()
+        result  = run_ver.run_simulations(10, 1, 1, pd.read_csv(r'C:\Users\mitch\Desktop\Masters\DataMiningI\Python-Simulation\sp500.csv'), 5, 10)
+        print(result)
+        #result  = Process(target=self.run_simulations_process_test,  args=(5, 1, 1, pd.read_csv(r'C:\Users\mitch\Desktop\Masters\DataMiningI\Python-Simulation\sp500.csv'), 5, Container))
 if __name__ == '__main__':
     freeze_support()
     _main()
