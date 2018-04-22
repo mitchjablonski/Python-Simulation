@@ -93,7 +93,10 @@ class PoolTypeRun(object):
                                                savings,
                                                allowance,
                                                stock_change_df)
-        return (pool.map(partial_simulations_function, run_list))
+        results = (pool.map(partial_simulations_function, run_list))
+        pool.close()
+        pool.join()
+        return results
 ##Needs to be defined outside class due to pool restrictions
 def simulation_run_format_pool(number_months_retired, savings, allowance, stock_change_df, run_num = None):
     num_rows,_ = stock_change_df.shape

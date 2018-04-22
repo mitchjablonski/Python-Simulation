@@ -92,7 +92,7 @@ PROCESS_RUN_PIPE = 4
 ##Implement pipes
 if __name__ == "__main__":
     run_type = PROCESS_RUN_PIPE
-    simulation_runs = 5000
+    simulation_runs = 1000
     number_months_retired = 12*25
     savings = 10**6
     confidence_allowance = 10000
