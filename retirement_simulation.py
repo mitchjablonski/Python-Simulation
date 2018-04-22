@@ -92,7 +92,7 @@ PROCESS_RUN_PIPE = 4
 ##Implement pipes
 if __name__ == "__main__":
     run_type = PROCESS_RUN_PIPE
-    simulation_runs = 200
+    simulation_runs = 5000
     number_months_retired = 12*25
     savings = 10**6
     confidence_allowance = 10000
@@ -111,3 +111,10 @@ if __name__ == "__main__":
     #85 seconds for process with manager
     ##77 with queue
     ##77 with pipe
+
+    ##For 5000 runs:
+    #Regular run time : 807 seconds
+    #pool run time: 235 seconds
+    #Process run manager: 255 seconds
+    #Process run queue: 248 seconds
+    #Process run pipe: 249 seconds

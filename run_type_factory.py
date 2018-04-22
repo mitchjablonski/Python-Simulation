@@ -196,7 +196,6 @@ class ManagerContainer(ContainerClass):
         ##This implementation doesnt use num_procs
         for proc in jobs:
             proc.join()
-        temp_list = [result for result in self.list]
         return [result for result in self.list]
 
 class QueueContainer(ContainerClass):
