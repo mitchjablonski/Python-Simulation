@@ -181,9 +181,14 @@ class ContainerFactory(object):
             return PipeContainer()
             
 class ContainerClass(object):
-    __metaclass__ = ABCMeta
     def __init__(self):
         pass
+    
+    def update_output(self, savings):
+        raise Exception("Not Implemented")
+    
+    def get_output(self, num_procs, jobs):
+        raise Exception("Not Implemented")
     
 class ManagerContainer(ContainerClass):
     def __init__(self):
@@ -191,15 +196,18 @@ class ManagerContainer(ContainerClass):
         self.list = Manager().list()
     
     def update_output(self, savings):
-        for result in savings:
-            self.list.append(result)
-        #Consider using a local list function and overall list function to avoid loop above
+        self.list.append(savings)
         
     def get_output(self, num_procs, jobs):
         ##This implementation doesnt use num_procs
         for proc in jobs:
             proc.join()
-        return [result for result in self.list]
+        ##we have been appending lists to our list, return the reduced version of our list to make it 1d
+        ##IE turn [[1,2],[2,3]] to [1,2,2,3]
+        return reduce(lambda x,y: x + y, self.list)
+        #if our list had just been a a single list we would have had to use list comprehension
+        #The manager list would not work inline with other lists, or being stored as a dict
+        #return [result for result in self.list]
 
 class QueueContainer(ContainerClass):
     def __init__(self):

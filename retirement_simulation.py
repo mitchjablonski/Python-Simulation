@@ -72,7 +72,7 @@ def _main(simulation_runs, number_months_retired, savings, monthly_allowance, co
                                                stock_change_df)
     ##We can't predict length to converge for confidence without seed, time before it.  Use some crude timing
     print('{} seconds of run time for run type {}'.format((time.time() - start_time), run_type))
-    #print(result_savings)
+
     confidence_savings_amount, confidence_savings_result = determine_number_runs_for_confidence(number_months_retired,
                                                                                                 savings,
                                                                                                 stock_change_df,
